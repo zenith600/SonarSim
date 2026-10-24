@@ -1,55 +1,27 @@
-# Python byte-compiled / optimized / DLL files
+# Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.pyo
-
-# Distribution / packaging
-dist/
-build/
 *.egg-info/
-*.egg
 .eggs/
-RECORD
-wheels/
-pip-wheel-metadata/
+build/
+dist/
 
-# Virtual environments
+# Environments
 .venv/
 venv/
-env/
-ENV/
 
-# Testing / coverage
+# Test and tool caches
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
-.tox/
 
-# PyInstaller
-*.spec
-
-# Jupyter
-.ipynb_checkpoints/
-
-# Editor
-.vscode/settings.json
+# Editors and OS
+.vscode/
 .idea/
-*.swp
-*.swo
-*~
-
-# OS
 .DS_Store
 Thumbs.db
 
-# Simulation output data (large, generated files)
-simulation_results.json
-visualization_data.json
-acoustic_dataset.npz
-*.pkl
-*.pt
-
-# Uploaded model files (optional — remove if you want to track pre-trained models)
-# sklearn_detector.pkl
-# pytorch_detector.pt
+# Generated outputs
+examples/figures/
+data/

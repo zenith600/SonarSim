@@ -1,199 +1,105 @@
-# acousticsim
+# sonarsim
 
-**3D Underwater Acoustic Ray Tracing Simulator with ML Object Detection**
+Physics-based generation of labelled active sonar datasets for arbitrary
+triangular-mesh targets and configurable sonars. This is the code behind the
+paper *SonarSim: A Physics-Based Framework for Generating Labelled Active
+Sonar Datasets*.
 
-[![PyPI version](https://badge.fury.io/py/acousticsim.svg)](https://pypi.org/project/acousticsim/)
-[![Python](https://img.shields.io/pypi/pyversions/acousticsim.svg)](https://pypi.org/project/acousticsim/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+Each simulated ping gives the complex signals on every hydrophone, the
+beamformed sector image and matched-filter range profile, and a JSON label
+holding the exact scenario that produced them.
 
-`acousticsim` is a physics-based Python library for simulating underwater acoustic propagation using 3D ray tracing (30–200 kHz sonar range), and training machine learning models to detect and localize objects from acoustic echoes.
+> **Provenance.** The version used for the paper was lost with a laptop. This
+> package was rebuilt in October 2026 from the paper's description and the
+> surviving older code (`acousticsim`, kept as the first commit in this
+> repository's history). See [CHANGELOG.md](CHANGELOG.md) for what that means
+> for reproducing the paper's numbers.
 
----
-
-## Features
-
-- **Accurate acoustic physics** — Mackenzie sound speed, Thorp absorption, geometric spreading, multipath propagation
-- **3D ray tracing** — reflection off walls, seabed, surface and arbitrary objects; refraction via depth-varying sound speed
-- **Import any 3D object** — load `.stl`, `.obj`, `.gltf`, `.glb` files and drop them into the simulation
-- **Dual intersection modes** — fast AABB bounding box or exact per-triangle Möller–Trumbore
-- **Full 6-DoF labeling** — position (x, y, z) + orientation (roll, pitch, yaw) per object
-- **sklearn baseline** — Random Forest classifier + pose regressor
-- **PyTorch multi-task MLP** — shared backbone → class head (CrossEntropy) + pose head (MSE), with early stopping
-- **Dataset generation** — randomized placement → run simulation → extract features → labeled dataset (.npz)
-- **Real-time streaming** — WebSocket server + browser 3D viewer
-
----
-
-## Installation
+## Install
 
 ```bash
-# Core library (ray tracing only)
-pip install acousticsim
-
-# With ML object detection pipeline
-pip install acousticsim[ml]
-
-# With 3D mesh import (STL / OBJ / GLTF)
-pip install acousticsim[mesh]
-
-# Everything
-pip install acousticsim[all]
+pip install -e ".[dev]"
 ```
 
----
+Only `numpy` and `scipy` are required. OBJ meshes load without extra
+packages; `pip install sonarsim[mesh]` adds STL/GLTF/PLY via trimesh, and
+`sonarsim[plot]` adds matplotlib for the figure script.
 
-## Quick Start
-
-### Basic Simulation
+## Quick start
 
 ```python
-from acousticsim import Water, WaveEmitter, Hydrophone, Object3D, Simulation
+import numpy as np
+import sonarsim as ss
 
-water = Water(size=(100, 100, 50))          # 100m × 100m × 50m deep
-sim   = Simulation(water)
+sonar = ss.A_HF_imaging()                      # 80-120 kHz LFM, 48-element array
+env = ss.Environment(depth=40.0, seabed="sand", sea_state=2)
+target = ss.Target(ss.Mesh.from_file("examples/assets/AlienAnimal.obj", scale=0.12))
 
-wall = Object3D("Wall", position=[60, 50, 25], size=[1, 80, 40],
-                reflection_coefficient=0.85)
-sim.add_object(wall)
+# Target about 150 m away at bearing 8 deg, 12 m deep, chest towards the sonar.
+pos = [149.3 * np.cos(np.radians(8)), 149.3 * np.sin(np.radians(8)), -12.0]
+pose = ss.Pose.facing(pos, aspect_deg=0.0, sonar_position=sonar.position)
 
-emitter = WaveEmitter(position=[10, 50, 25], frequency_khz=85.0,
-                      beam_pattern='spherical', power_db=180.0)
-sim.add_emitter(emitter)
-
-hydro = Hydrophone(position=[50, 50, 25], name="Sensor_1")
-sim.add_hydrophone(hydro)
-
-results = sim.run(num_rays_per_emitter=1000)
-print(f"Arrivals detected: {hydro.get_arrival_count()}")
-print(f"First arrival:     {hydro.get_first_arrival()['time']*1000:.2f} ms")
+ping = ss.simulate_ping(sonar, env, target, pose, seed=0)
+products = ss.process_ping(ping)               # image_db, profile_db, ranges, angles_deg
+label = ss.make_label(ping, profile_db=products["profile_db"],
+                      image_ranges=products["ranges"], angles_deg=products["angles_deg"])
 ```
 
-### Import a 3D Object
+Generate a dataset with randomised placements (AutoPlacer):
 
-```python
-from acousticsim import MeshImporter, ImportedObject3D, Simulation, Water
-
-mesh = MeshImporter.load("submarine.stl", scale=0.001)   # STL in mm → meters
-
-water = Water(size=(200, 200, 100))
-sim   = Simulation(water)
-
-sub = ImportedObject3D(
-    mesh_data=mesh,
-    position=[100, 100, 50],
-    rotation_deg=(0, 0, 45),        # yaw 45°
-    intersection_mode='mesh',        # exact triangle intersection
-    reflection_coefficient=0.7,
-)
-sim.add_object(sub)
+```bash
+sonarsim-generate --mesh examples/assets/AlienAnimal.obj --scale 0.12 \
+    --preset A_HF_imaging -n 300 --seed 0 --out data/A_HF
 ```
 
-### Generate a Training Dataset
+Each ping is written as `ping_NNNNN.npz` (sector image max-pooled to 1024
+range bins, full-resolution range profile, axes; raw element signals with
+`--save-raw`) and `ping_NNNNN.json` (label), plus a `manifest.json`.
 
-```python
-from acousticsim import MeshImporter, DatasetGenerator, DatasetConfig
+## Physics models
 
-meshes = {
-    'submarine': MeshImporter.load('models/submarine.stl', scale=0.001),
-    'mine':      MeshImporter.load('models/mine.obj',      scale=0.001),
-    'rock':      MeshImporter.load('models/rock.glb'),
-}
-
-cfg = DatasetConfig(water_size=(100, 100, 50), num_rays=500)
-gen = DatasetGenerator(meshes, config=cfg)
-
-dataset = gen.generate(num_samples=2000, verbose=True)
-dataset.save('acoustic_dataset.npz')
-```
-
-### Train & Detect
-
-```python
-from acousticsim import (
-    AcousticDataset, train_sklearn, train_pytorch, evaluate, AcousticDetector
-)
-
-dataset = AcousticDataset.load('acoustic_dataset.npz')
-
-# Train both models
-sklearn_det, X_test, yc_test, yp_test = train_sklearn(dataset)
-torch_det, _, _, _                    = train_pytorch(dataset, epochs=150)
-
-# Evaluate
-evaluate(X_test, yc_test, yp_test, dataset.class_names,
-         sklearn_det=sklearn_det, pytorch_det=torch_det)
-
-# Save & deploy
-sklearn_det.save('sklearn_detector.pkl')
-
-# Live detection on an unknown object
-detector = AcousticDetector.from_sklearn('sklearn_detector.pkl')
-result = detector.simulate_and_detect('unknown_object.stl', position=[40, 50, 25])
-# → {'class_name': 'submarine', 'x': 41.2, 'y': 48.7, 'z': 24.1, ...}
-```
-
----
-
-## Coordinate System
-
-```
-Y (Length / front-back)
-↑
-|___→ X (Width / left-right)
-/
-↓
-Z (Depth, positive downward)
-```
-
-Origin is at the front-left surface corner. `Z=0` = water surface, `Z=depth` = seabed.
-
----
-
-## Physics
-
-| Model | Implementation |
+| Component | Model |
 |---|---|
-| Sound speed | Mackenzie (1981) equation — temperature, salinity, depth |
-| Geometric spreading | Spherical: TL = 20 log₁₀(r) dB |
-| Frequency absorption | Thorp equation (dB/km vs. kHz) |
-| Reflection | Energy-based with configurable coefficient |
-| Frequency-selective absorption | Per-frequency-band absorption coefficients on objects |
-| Phase | Updated per ray step: Δφ = 2π · f · Δt |
-| Ray termination | amplitude < 1×10⁻⁶, bounces > 15, or path > 1000 m |
+| Sound speed | Mackenzie (1981) nine-term equation; straight rays at the depth-averaged speed |
+| Absorption | Francois-Garrison (1982) |
+| Multipath | Method of images in a flat waveguide, up to `max_bounces` reflections per one-way path |
+| Surface reflection | Eckart (1953) coherent loss; Pierson-Moskowitz wave height from wind speed |
+| Bottom reflection | Rayleigh fluid-fluid coefficient; five seabed types |
+| Target scattering | Kirchhoff (physical optics) with closed-form triangle integrals; rigid or pressure-release |
+| Reverberation | Lambert's law for seabed and surface, complex-Gaussian patches, direct paths only |
+| Ambient noise | Wenz curves (Coates 1990 parametric form) |
+| Receiver | Horizontal uniform line array, true-time-delay beamforming, matched filter |
+| Waveforms | LFM and CW, Tukey-windowed |
 
----
+Conventions: x east, y north, z up, sea surface at z = 0. The sonar sits at
+(0, 0, -depth) looking east; bearing 0 is broadside and positive bearings are
+towards north. Signals are complex baseband pressures in uPa and the
+time convention is exp(+i 2 pi f t).
 
-## Project Structure
+## Reproducing the paper's figures
 
-```
-acousticsim/
-├── water.py              Water environment (sound speed, absorption)
-├── ray.py                Acoustic ray (propagation, phase, amplitude)
-├── emitter.py            Wave emitter (spherical, cone, chirp)
-├── hydrophone.py         Acoustic sensor (multipath detection)
-├── object3d.py           Walls, seabed, surface (AABB geometry)
-├── simulation.py         Ray tracing engine
-├── mesh_importer.py      STL/OBJ/GLTF loader (trimesh)
-├── imported_object3d.py  Mesh objects with AABB or triangle ray intersection
-├── feature_extractor.py  Hydrophone arrivals → ML feature vectors
-├── dataset_generator.py  Synthetic labeled dataset generation
-├── train_detector.py     sklearn RF + PyTorch MLP training
-└── inference.py          AcousticDetector deployment wrapper
+```bash
+python examples/paper_figures.py --out examples/figures
 ```
 
----
+`examples/assets/AlienAnimal.obj` is the humanoid mesh used in the paper
+(48,918 facets; scale 0.12 gives its 1.40 x 2.49 x 0.45 m extent).
 
-## Requirements
+## Tests
 
-- Python ≥ 3.8
-- `numpy`, `scipy` (always)
-- `trimesh[easy]` — for 3D mesh import
-- `scikit-learn`, `torch` — for ML pipeline
-- `aiohttp`, `websockets` — for real-time streaming
-- `matplotlib` — for plotting
+```bash
+pytest
+```
 
----
+The tests check the physics against closed-form results: flat-plate target
+strength and its sinc pattern, the rigid-sphere -6.02 dB limit, the triangle
+integral against quadrature, image-path geometry, matched-filter timing,
+beam steering and the ambient-noise level.
 
-## License
+## Limitations
 
-MIT — see [LICENSE](LICENSE)
+Straight-ray propagation (no refraction); Kirchhoff scattering only, so no
+multiple scattering, diffraction, creeping waves, elastic response or
+self-shadowing; far-field scattering, so targets closer than about 2L^2/lambda
+are approximate; reverberation via direct paths only, no volume
+reverberation; no platform or target motion.

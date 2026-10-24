@@ -1,124 +1,44 @@
 [build-system]
-# PEP 517/518 — tells pip/build HOW to build this package
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
 
-# ─────────────────────────────────────────────────────────────────────────────
 [project]
-name = "acousticsim"                # PyPI package name (must be globally unique)
-version = "0.1.0"
-description = "3D underwater acoustic ray tracing simulator with ML object detection"
+name = "sonarsim"
+dynamic = ["version"]
+description = "Physics-based generation of labelled active sonar datasets"
 readme = "README.md"
-license = { file = "LICENSE" }
-requires-python = ">=3.8"
-
-authors = [
-    { name = "Your Name", email = "you@example.com" },
-]
-
-keywords = [
-    "sonar", "acoustics", "underwater", "ray-tracing",
-    "simulation", "object-detection", "hydrophone",
-]
-
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "SonarSim authors" }]
+keywords = ["sonar", "underwater acoustics", "simulation", "synthetic data",
+            "target scattering", "beamforming", "dataset generation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
-    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
     "Topic :: Scientific/Engineering :: Physics",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "License :: OSI Approved :: MIT License",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Operating System :: OS Independent",
 ]
+dependencies = ["numpy>=1.24", "scipy>=1.10"]
 
-# Core runtime dependencies (always installed with the package)
-dependencies = [
-    "numpy>=1.24.0",
-    "scipy>=1.10.0",
-]
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Optional extras — installed with:  pip install acousticsim[ml]
-#                                    pip install acousticsim[realtime]
-#                                    pip install acousticsim[all]
 [project.optional-dependencies]
+mesh = ["trimesh>=4.0"]          # STL / GLTF / PLY meshes (OBJ needs nothing extra)
+plot = ["matplotlib>=3.7"]       # examples/paper_figures.py
+dev = ["pytest>=8", "build>=1.2", "ruff>=0.5", "matplotlib>=3.7"]
 
-mesh = [
-    "trimesh[easy]>=3.23.0",       # STL / OBJ / GLTF import
-]
-
-ml = [
-    "trimesh[easy]>=3.23.0",
-    "scikit-learn>=1.3.0",         # Random Forest baseline
-    "torch>=2.0.0",                # PyTorch MLP detector
-]
-
-realtime = [
-    "aiohttp>=3.8.0",              # WebSocket server
-    "websockets>=11.0.0",
-]
-
-viz = [
-    "matplotlib>=3.7.0",           # Plotting
-]
-
-all = [
-    "trimesh[easy]>=3.23.0",
-    "scikit-learn>=1.3.0",
-    "torch>=2.0.0",
-    "aiohttp>=3.8.0",
-    "websockets>=11.0.0",
-    "matplotlib>=3.7.0",
-]
-
-dev = [
-    "pytest>=7.0",
-    "pytest-asyncio>=0.21",
-    "build>=1.0",
-    "twine>=4.0",
-    "ruff",
-    "mypy",
-]
-
-# ─────────────────────────────────────────────────────────────────────────────
-[project.urls]
-Homepage      = "https://github.com/yourusername/acousticsim"
-Repository    = "https://github.com/yourusername/acousticsim"
-Documentation = "https://github.com/yourusername/acousticsim#readme"
-"Bug Tracker" = "https://github.com/yourusername/acousticsim/issues"
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CLI entry points (installs these as terminal commands)
 [project.scripts]
-acousticsim-demo   = "acousticsim.demo:main"
-acousticsim-detect = "acousticsim.inference:quick_start_demo"
+sonarsim-generate = "sonarsim.cli:main"
 
-# ─────────────────────────────────────────────────────────────────────────────
+[tool.setuptools.dynamic]
+version = { attr = "sonarsim._version.__version__" }
+
 [tool.setuptools.packages.find]
-# Automatically find all sub-packages under the acousticsim/ directory
-where   = ["."]          # search from repo root
-include = ["acousticsim*"]
-exclude = ["tests*", "__pycache__*"]
+where = ["src"]
 
-[tool.setuptools.package-data]
-# Include non-.py files bundled with the package (e.g., HTML visualizer)
-"acousticsim" = [
-    "*.html",
-    "*.txt",
-    "*.md",
-]
-
-# ─────────────────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
-testpaths    = ["tests"]
-asyncio_mode = "auto"
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py38"
+target-version = "py310"
