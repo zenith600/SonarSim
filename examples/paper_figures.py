@@ -59,6 +59,27 @@ def fig1_target(target, out):
     save(fig, out, "fig1_target")
 
 
+def fig1_target_compact(target, out):
+    """Two-panel version (mesh and point cloud, 3/4 view) for a single column."""
+    mesh = target.mesh
+    pts = mesh.sample_surface(4000, rng=0)
+    lim = mesh.extent.max() / 2
+    fig = plt.figure(figsize=(6.5, 3.6))
+    for col, kind in enumerate(("mesh", "point cloud")):
+        ax = fig.add_subplot(1, 2, col + 1, projection="3d")
+        if kind == "mesh":
+            ax.plot_trisurf(*mesh.vertices.T, triangles=mesh.faces, color="#2b5d8a",
+                            linewidth=0, antialiased=False, shade=True)
+        else:
+            ax.scatter(*pts.T, c=pts[:, 2], s=1.5, cmap="viridis")
+        ax.view_init(elev=20, azim=-35)
+        ax.set(xlim=(-lim, lim), ylim=(-lim, lim), zlim=(-lim, lim))
+        ax.set_box_aspect((1, 1, 1))
+        ax.set_xticklabels([]), ax.set_yticklabels([]), ax.set_zticklabels([])
+        ax.set_title(f"({'ab'[col]}) {kind}", fontsize=10)
+    save(fig, out, "fig1_target_compact")
+
+
 def fig2_autoplacer(target, out, n=300):
     sonar = ss.B_LF_search()
     placer = ss.AutoPlacer(sonar, ss.Environment(depth=40.0), target, seed=0)
@@ -198,7 +219,8 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     target = load_target(args.mesh, args.scale)
     todo = set(args.only or range(1, 7))
-    steps = [(1, lambda: fig1_target(target, out)), (2, lambda: fig2_autoplacer(target, out)),
+    steps = [(1, lambda: (fig1_target(target, out), fig1_target_compact(target, out))),
+             (2, lambda: fig2_autoplacer(target, out)),
              (3, lambda: fig3_sphere(out)), (4, lambda: fig4_aspect(target, out)),
              (5, lambda: fig5_and_6(target, out))]
     for num, fn in steps:
