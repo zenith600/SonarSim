@@ -137,6 +137,47 @@ def fig3_sphere(out, c=1500.0):
         print(f"  sphere {name}: max |TS - ref| = {np.max(np.abs(ts - ref)):.2f} dB")
 
 
+def fig_validation_combined(out, c=1500.0):
+    """Sphere (a) and flat plate (b) validation side by side, single column."""
+    freqs = np.geomspace(5e3, 150e3, 25)
+    incident = np.array([0.31, -0.22, -0.92])
+    fine = ss.Target(ss.Mesh.sphere(1.0, 300, 600))
+    coarse = ss.Target(ss.Mesh.sphere(1.0, 60, 120))
+    ref = 20 * np.log10(0.5)
+    fig, (a, b) = plt.subplots(1, 2, figsize=(7.0, 2.6))
+    a.semilogx(freqs / 1e3, fine.target_strength(freqs, incident, sound_speed=c), "o-", ms=3,
+               lw=0.9, label=f"facets, {fine.mesh.n_facets // 1000}k")
+    a.semilogx(freqs / 1e3, coarse.target_strength(freqs, incident, sound_speed=c), "s-", ms=2.5,
+               lw=0.9, label=f"facets, {coarse.mesh.n_facets // 1000}k")
+    a.semilogx(freqs / 1e3, point_scatterer_ts(coarse, freqs, incident, c), "x--", ms=3, lw=0.9,
+               label=f"point scatterers, {coarse.mesh.n_facets // 1000}k")
+    a.axhline(ref, color="k", ls=":", label="analytic $-6.02$ dB")
+    a.set(xlabel="frequency (kHz)", ylabel="TS (dB re 1 m)", title="(a) rigid sphere, $a$ = 1 m")
+    a.legend(fontsize=6.5, loc="upper left")
+    side, f = 0.5, 50e3
+    k, lam = 2 * np.pi * f / c, c / f
+    h = side / 2
+    plate = ss.Target(ss.Mesh(np.array([[0, -h, -h], [0, h, -h], [0, h, h], [0, -h, h]], float),
+                              np.array([[0, 1, 2], [0, 2, 3]]), "plate"))
+    angles = np.linspace(-40, 40, 801)
+    sim = [20 * np.log10(abs(plate.backscatter([f], [-np.cos(t), np.sin(t), 0], sound_speed=c)[0]))
+           for t in np.radians(angles)]
+    ana = [20 * np.log10(side**2 / lam * abs(np.cos(t)) * abs(np.sinc(k * side * np.sin(t) / np.pi)))
+           for t in np.radians(angles)]
+    b.plot(angles, ana, "k-", lw=2.2, alpha=0.3, label="closed form")
+    b.plot(angles, sim, "C0-", lw=0.7, label="SonarSim, 2 facets")
+    b.set(xlabel="incidence angle (deg)", ylabel="TS (dB re 1 m)", ylim=(-40, 25),
+          title="(b) 0.5 m plate, 50 kHz")
+    b.legend(fontsize=6.5, loc="upper right")
+    for ax in (a, b):
+        ax.title.set_fontsize(9)
+        ax.tick_params(labelsize=8)
+        ax.xaxis.label.set_fontsize(8)
+        ax.yaxis.label.set_fontsize(8)
+    fig.tight_layout()
+    save(fig, out, "fig_validation_combined")
+
+
 def fig4_aspect(target, out, c=1500.0, step=0.5):
     aspects = np.arange(0.0, 360.0, step)
     ts = {}
@@ -221,7 +262,8 @@ def main():
     todo = set(args.only or range(1, 7))
     steps = [(1, lambda: (fig1_target(target, out), fig1_target_compact(target, out))),
              (2, lambda: fig2_autoplacer(target, out)),
-             (3, lambda: fig3_sphere(out)), (4, lambda: fig4_aspect(target, out)),
+             (3, lambda: (fig3_sphere(out), fig_validation_combined(out))),
+             (4, lambda: fig4_aspect(target, out)),
              (5, lambda: fig5_and_6(target, out))]
     for num, fn in steps:
         if num in todo or (num == 5 and 6 in todo):
