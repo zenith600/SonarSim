@@ -30,7 +30,16 @@ from sonarsim.processing import pool_ranges
 RANGE_BINS = 1024
 PATCH = (5, 11)            # beams x range bins
 TOL_RANGE_M = 2.0
-TOL_BEAMS = 2
+TOL_BEAMS = 2              # for picking the positive training cell
+
+
+def half_beamwidth_deg(sonar, c=1500.0):
+    """Half the -3 dB width of the shaded array at the centre frequency."""
+    w, y = sonar.shading_weights, sonar.element_offsets
+    th = np.radians(np.linspace(-15, 15, 30001))
+    pattern = np.abs(np.exp(2j * np.pi * sonar.center_frequency / c * np.outer(np.sin(th), y)) @ w)
+    half = th[pattern >= pattern.max() * 10 ** (-3 / 20)]
+    return float(np.degrees(half.max() - half.min())) / 2.0
 
 
 # ----------------------------------------------------------------------------
@@ -172,9 +181,11 @@ def training_set(ds, rng, negatives_per_ping=40):
     return features(np.array(xs)), np.array(ys)
 
 
-def evaluate(net, ds):
+def evaluate(net, ds, tol_bearing_deg):
+    """Localised = highest-scoring cell within the echo span (+-2 m) and within
+    half a beamwidth of the true bearing."""
     n_target = int(ds["n_target"])
-    ranges = ds["ranges"]
+    ranges, angles = ds["ranges"], ds["angles_deg"]
     dr = float(ranges[1] - ranges[0])
     scores, hits = [], []
     for i, img in enumerate(ds["images"].astype(np.float32)):
@@ -183,9 +194,10 @@ def evaluate(net, ds):
         scores.append(float(s.max()))
         if i < n_target:
             bi, ri = np.unravel_index(np.argmax(s), s.shape)
-            ti, tb, tl = ds["truth"][i, :3]
+            ti, tl, true_bearing = ds["truth"][i, 0], ds["truth"][i, 2], ds["truth"][i, 4]
             tol = TOL_RANGE_M / dr
-            hits.append(ti - tol <= ri <= tl + tol and abs(bi - tb) <= TOL_BEAMS)
+            hits.append(ti - tol <= ri <= tl + tol
+                        and abs(angles[bi] - true_bearing) <= tol_bearing_deg)
     scores = np.array(scores)
     pos, neg = scores[:n_target], scores[n_target:]
     auc = float(np.mean(pos[:, None] > neg[None, :]) + 0.5 * np.mean(pos[:, None] == neg[None, :]))
@@ -214,14 +226,16 @@ def train(args):
 
     train_sets = {k: subset(ds, split[k][0]) for k, ds in sets.items()}
     test_sets = {k: subset(ds, split[k][1]) for k, ds in sets.items()}
-    results = {}
+    tol = {k: half_beamwidth_deg(ss.preset(k)) for k in sets}
+    print("bearing tolerance (half beamwidth, deg):", tol)
+    results = {"tolerance": {"range_m": TOL_RANGE_M, "bearing_deg": tol}}
     for name, keys in (("A", ["A_HF_imaging"]), ("B", ["B_LF_search"]),
                        ("A+B", ["A_HF_imaging", "B_LF_search"])):
         xs, ys = zip(*(training_set(train_sets[k], rng) for k in keys))
         x, y = np.concatenate(xs), np.concatenate(ys)
         net = PatchNet(x.shape[1]).fit(x, y)
         for tk, short in (("A_HF_imaging", "A"), ("B_LF_search", "B")):
-            results[f"train {name} -> test {short}"] = evaluate(net, test_sets[tk])
+            results[f"train {name} -> test {short}"] = evaluate(net, test_sets[tk], tol[tk])
             print(f"train {name:>3s} -> test {short}: {results[f'train {name} -> test {short}']}")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
