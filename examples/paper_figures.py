@@ -17,6 +17,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
+from matplotlib.patches import Rectangle
 
 import sonarsim as ss
 from sonarsim.processing import find_peak, local_floor, pool_ranges
@@ -207,6 +208,25 @@ def scenario_ping(target, sonar, rng_m, bearing, depth, seabed, sea_state, aspec
     return ss.simulate_ping(sonar, env, target, pose, seed=seed)
 
 
+def beamwidth_deg(sonar, sound_speed):
+    """-3 dB width of the shaded array's main lobe at the centre frequency."""
+    s = np.linspace(-0.4, 0.4, 8001)
+    k = 2 * np.pi * sonar.center_frequency / sound_speed
+    pattern = np.abs(np.exp(1j * k * np.outer(s, sonar.element_offsets)) @ sonar.shading_weights)
+    main = s[pattern >= pattern.max() / np.sqrt(2)]
+    return float(np.degrees(np.arcsin(main.max()) - np.arcsin(main.min())))
+
+
+def draw_ground_truth(ax, box, arrivals, pad, lw):
+    """Ground-truth box (padded so the echo inside stays visible) plus markers
+    along the top edge at the predicted multipath arrivals."""
+    (r0, r1), (b0, b1) = box
+    ax.add_patch(Rectangle((r0 - pad, b0), r1 - r0 + 2 * pad, b1 - b0, fill=False, ec="red",
+                           lw=lw))
+    ax.plot(arrivals, [0.93] * len(arrivals), "v", color="orange", ms=6, mec="black", mew=0.4,
+            transform=ax.get_xaxis_transform(), clip_on=False)
+
+
 def fig5_and_6(target, out):
     cases = [(ss.A_HF_imaging(), 150.0, 8.0, 12.0, "sand", 2),
              (ss.B_LF_search(), 380.0, -15.0, 20.0, "rock", 4)]
@@ -217,14 +237,47 @@ def fig5_and_6(target, out):
         prod = ss.process_ping(ping)
         first = first or (ping, prod)
         image, ranges = pool_ranges(prod["image_db"], prod["ranges"], 1500)
-        im = ax.pcolormesh(ranges, prod["angles_deg"], image, vmin=0, vmax=40, cmap="viridis",
-                           shading="auto")
-        ax.plot(r, brg, "o", mfc="none", mec="r", ms=14, mew=1.2, label="ground truth")
+        style = dict(vmin=0, vmax=40, cmap="viridis", shading="auto")
+        im = ax.pcolormesh(ranges, prod["angles_deg"], image, **style)
+
+        # Ground truth as stored in the ping's label: the target's extent in
+        # range and bearing, widened by the beamwidth that a point target
+        # occupies in the image.
+        label = ss.make_label(ping, image_ranges=prod["ranges"], angles_deg=prod["angles_deg"])
+        half_bw = beamwidth_deg(sonar, ping.sound_speed) / 2
+        (r0, r1), (b0, b1) = label["bbox"]["range_m"], label["bbox"]["bearing_deg"]
+        box = ((r0, r1), (b0 - half_bw, b1 + half_bw))
+        multipath = [a.range_m for a in ping.arrivals
+                     if a.level_db > 0 and a.range_m > r1 + 0.5]
+
+        # Zoomed inset on the side away from the target; the white frame on
+        # the full image marks where it comes from.
+        far = max(multipath + [r1])
+        zr = (r0 - 4.0, far + 4.0)
+        zb = (brg - 3 * half_bw, brg + 3 * half_bw)
+        inset = ax.inset_axes([0.05, 0.06 if brg > 0 else 0.52, 0.4, 0.42])
+        sel = (prod["ranges"] >= zr[0]) & (prod["ranges"] <= zr[1])
+        rows = (prod["angles_deg"] >= zb[0] - 1) & (prod["angles_deg"] <= zb[1] + 1)
+        inset.pcolormesh(prod["ranges"][sel], prod["angles_deg"][rows],
+                         prod["image_db"][np.ix_(rows, sel)], **style)
+        draw_ground_truth(inset, box, multipath, pad=0.04 * (zr[1] - zr[0]), lw=1.4)
+        inset.set(xlim=zr, ylim=zb)
+        inset.tick_params(axis="x", direction="in", pad=-11, labelsize=7, colors="white",
+                          length=3)
+        inset.tick_params(axis="y", left=False, labelleft=False)
+        for spine in inset.spines.values():
+            spine.set_edgecolor("white")
+        ax.indicate_inset_zoom(inset, edgecolor="white", alpha=0.9, lw=1.0)
+
+        ax.plot([], [], color="red", lw=1.4, label="ground truth (label box)")
+        if multipath:
+            ax.plot([], [], "v", color="orange", ms=6, mec="black", mew=0.4, ls="none",
+                    label="predicted multipath arrivals")
         ax.set(xlabel="range (m)", ylabel="bearing (deg)",
                xlim=(sonar.blanking_range, sonar.max_range),
                title=f"{sonar.name}: {sonar.waveform.f_low / 1e3:.0f}-"
                      f"{sonar.waveform.f_high / 1e3:.0f} kHz, {bed}, sea state {sea}")
-        ax.legend(fontsize=8, loc="upper left")
+        ax.legend(fontsize=8, loc="upper left" if brg > 0 else "lower left")
         fig.colorbar(im, ax=ax, label="contrast above range median (dB)")
     save(fig, out, "fig5_sector_images")
 
